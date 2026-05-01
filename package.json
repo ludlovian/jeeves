@@ -1,0 +1,14 @@
+{
+  "name": "jeeves",
+  "version": "0.0.0",
+  "description": "General purpose fetcher",
+  "type": "module",
+  "exports": {
+      ".": "./src/index.js"
+  },
+  "scripts": {
+    "clean": "rm -rf coverage/ node_modules/.cache/",
+    "lint": "standard '{src,test}/**/*.js'|snazzy",
+    "format": "prettier-standard '{src,test}/**/*.js'"
+  }
+}
