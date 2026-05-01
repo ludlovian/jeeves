@@ -66,4 +66,6 @@ async function json (reviver) {
 
 const get = demand.bind(null, 'GET')
 const post = demand.bind(null, 'POST')
+
 export { demand, get, post }
+export default { demand, get, post }
