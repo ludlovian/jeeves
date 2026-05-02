@@ -10,5 +10,8 @@
     "clean": "rm -rf coverage/ node_modules/.cache/",
     "lint": "standard '{src,test}/**/*.js'|snazzy",
     "format": "prettier-standard '{src,test}/**/*.js'"
+  },
+  "dependencies": {
+    "@ludlovian/debug": "file:../debug"
   }
 }

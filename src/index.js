@@ -2,6 +2,9 @@ import assert from 'node:assert'
 import { request as _request } from 'node:https'
 import { createGunzip } from 'node:zlib'
 import { globalAgent } from 'node:http'
+import Debug from '@ludlovian/debug'
+
+const debug = Debug('jeeves:main')
 
 class Jeeves {
   #res
@@ -24,6 +27,8 @@ class Jeeves {
       url = new URL(url)
       opts.method ??= method
       if (url.protocol === 'http:') opts.agent ??= globalAgent
+
+      debug('fetch: %s', url)
 
       const req = _request(url, opts, res => {
         if (res.statusCode >= 400) {
