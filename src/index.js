@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { request as _request } from 'node:https'
 import { createGunzip } from 'node:zlib'
 import { globalAgent } from 'node:http'
+import { Readable } from 'node:stream'
 import Debug from '@ludlovian/debug'
 
 const debug = Debug('jeeves:main')
@@ -43,23 +44,43 @@ class Jeeves {
 
       req.on('error', reject)
 
-      if (body) {
-        if (typeof body === 'object') {
-          if (Buffer.isBuffer(body)) {
-            // do nothing
-          } else if (body instanceof URLSearchParams) {
-            body = body.toString()
-            req.setHeader('Content-Type', 'application/x-www-form-urlencoded')
-          } else {
-            body = JSON.stringify(body)
-            req.setHeader('Content-Type', 'application/json')
-          }
-        }
-        req.setHeader('Content-Length', Buffer.byteLength(body))
-        req.write(body)
-      }
-      req.end()
+      this.#sendBody(req, body)
     })
+  }
+
+  static #sendBody (req, body) {
+    if (!body) return req.end()
+
+    if (typeof body !== 'object') {
+      assert(typeof body === 'string', 'Invalid type of body')
+      body = Buffer.from(body)
+    }
+
+    let ct
+
+    if (body instanceof Readable) {
+      req.on('error', e => body.emit('error', e))
+      body.pipe(req)
+      return
+    } else if (Buffer.isBuffer(body)) {
+      // no transform needed
+    } else if (body instanceof URLSearchParams) {
+      body = Buffer.from(body.toString())
+      ct = 'application/x-www-form-urlencoded'
+    } else {
+      body = Buffer.from(JSON.stringify(body))
+      ct = 'application/json'
+    }
+
+    if (ct && !req.hasHeader('content-type')) {
+      req.setHeader('content-type', ct)
+    }
+
+    if (!req.hasHeader('content-length')) {
+      req.setHeader('content-length', body.length)
+    }
+    req.write(body)
+    req.end()
   }
 
   static #makeError (res, url) {
@@ -101,6 +122,7 @@ class Jeeves {
     assert(!this.#consumed, 'data has already been consumed')
     this.#consumed = true
     if (this.#res.headers['content-encoding'] === 'gzip') {
+      debug('unzipping stream')
       const gunzip = createGunzip()
       gunzip.on('error', e => this.#res.emit('error', e))
       return this.#res.pipe(gunzip)
