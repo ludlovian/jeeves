@@ -1,11 +1,14 @@
 import assert from 'node:assert'
 import { request as _request } from 'node:https'
-import { createGunzip } from 'node:zlib'
+import { createGunzip, createBrotliDecompress } from 'node:zlib'
 import { globalAgent } from 'node:http'
 import { Readable } from 'node:stream'
 import Debug from '@ludlovian/debug'
 
 const debug = Debug('jeeves:main')
+
+const DFLT_UA =
+  'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
 
 class Jeeves {
   #res
@@ -49,14 +52,17 @@ class Jeeves {
   }
 
   static #sendBody (req, body) {
+    let ct
+
+    addHeader(req, 'accept-encoding', 'gzip, br')
+    addHeader(req, 'user-agent', DFLT_UA)
+
     if (!body) return req.end()
 
     if (typeof body !== 'object') {
       assert(typeof body === 'string', 'Invalid type of body')
       body = Buffer.from(body)
     }
-
-    let ct
 
     if (body instanceof Readable) {
       req.on('error', e => body.emit('error', e))
@@ -72,13 +78,9 @@ class Jeeves {
       ct = 'application/json'
     }
 
-    if (ct && !req.hasHeader('content-type')) {
-      req.setHeader('content-type', ct)
-    }
+    addHeader(req, 'content-type', ct)
+    addHeader(req, 'content-length', body.length)
 
-    if (!req.hasHeader('content-length')) {
-      req.setHeader('content-length', body.length)
-    }
     req.write(body)
     req.end()
   }
@@ -121,11 +123,21 @@ class Jeeves {
   stream () {
     assert(!this.#consumed, 'data has already been consumed')
     this.#consumed = true
+
     if (this.#res.headers['content-encoding'] === 'gzip') {
-      debug('unzipping stream')
+      //
+      debug('gzip stream')
       const gunzip = createGunzip()
       gunzip.on('error', e => this.#res.emit('error', e))
       return this.#res.pipe(gunzip)
+      //
+    } else if (this.#res.headers['content-encoding'] === 'br') {
+      //
+      debug('brotli stream')
+      const brotli = createBrotliDecompress()
+      brotli.on('error', e => this.#res.emit('error', e))
+      return this.#res.pipe(brotli)
+      //
     }
     return this.#res
   }
@@ -156,6 +168,21 @@ class Jeeves {
     return this.stream()[Symbol.asyncIterator]()
   }
 }
+
+// -----------------------------------------------------------------
+//
+//  Helpers
+//
+
+function addHeader (req, key, val) {
+  if (val == null || req.hasHeader(key)) return //
+  req.setHeader(key, val)
+}
+
+// -----------------------------------------------------------------
+//
+//  Exports
+//
 
 const get = Jeeves.demand.bind(Jeeves, 'GET')
 const post = Jeeves.demand.bind(Jeeves, 'POST')
