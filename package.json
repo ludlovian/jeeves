@@ -1,6 +1,6 @@
 {
   "name": "@ludlovian/jeeves",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "General purpose fetcher",
   "type": "module",
   "exports": {
