@@ -3,9 +3,14 @@ import { request as _request } from 'node:https'
 import { createGunzip, createBrotliDecompress } from 'node:zlib'
 import { globalAgent } from 'node:http'
 import { Readable } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
+
+import { AbortError } from '@ludlovian/emitter'
+import Gate from '@ludlovian/lock/gate'
 import Debug from '@ludlovian/debug'
 
 const debug = Debug('jeeves:main')
+const TESTCTRL = Symbol.for('@ludlovian.testctrl')
 
 const DFLT_UA =
   'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
@@ -37,9 +42,11 @@ class Jeeves {
       const req = _request(url, opts, res => {
         if (res.statusCode >= 400) {
           reject(this.#makeError(res, url))
+          res.resume() // consume the body
         } else if (res.statusCode >= 300 && redirect && res.headers.location) {
           url = new URL(res.headers.location, url)
-          this.demand(method, url, { body, ...opts }).then(resolve, reject)
+          res.resume() // consume the body
+          resolve(this.demand(method, url, { body, ...opts }))
         } else {
           resolve(new Jeeves(res))
         }
@@ -142,24 +149,92 @@ class Jeeves {
     return this.#res
   }
 
-  async text () {
-    const str = this.stream()
-    str.setEncoding('utf8')
-    let data = ''
-    for await (const chunk of str) {
-      data += chunk
+  // Provide the stream as async generator of Buffer[] batches as per
+  // the new iterable stream API
+  //
+  async * iter ({ signal } = {}) {
+    const src = this.stream()
+    if (!src.readable) return //
+    if (signal?.aborted) throw new AbortError()
+
+    let batch = []
+    let ended = false
+    let err = null
+
+    const gate = new Gate().close()
+
+    // handlers for events
+    const onData = buff => gate.open() && batch.push(buff)
+    const onAbort = () => gate.open()
+    const onEnd = () => gate.open() && (ended = true)
+    const onError = e => gate.open() && (err = e)
+
+    // wire up the emitters
+    src
+      .on('data', onData)
+      .on('end', onEnd)
+      .once('error', onError)
+    signal?.on('abort', onAbort)
+
+    // and process...
+    try {
+      while (true) {
+        // execution could park here ...
+        if (!gate.isOpen) await gate.untilOpen()
+        gate.close()
+        if (err) throw err
+        if (signal?.aborted) throw new AbortError()
+        if (ended) break //
+        const data = batch
+        batch = []
+        // ... or it could park here
+        yield data
+      }
+      if (batch.length) yield batch
+    } catch (_err) {
+      // if the error didn't come from the source, then kill the source
+      if (!err) src.destroy(_err)
+      throw _err
     }
-    return data
+  }
+
+  async text (opts) {
+    const decoder = new StringDecoder()
+    let output = ''
+
+    for await (const batch of this.iter(opts)) {
+      for (const buff of batch) {
+        output += decoder.write(buff)
+      }
+    }
+    output += decoder.end()
+    return output
+  }
+
+  async * lines (opts) {
+    const decoder = new StringDecoder()
+    let remainder = ''
+    for await (const batch of this.iter(opts)) {
+      let str = remainder
+      for (const buff of batch) {
+        str += decoder.write(buff)
+      }
+      const lines = str.split('\n')
+      remainder = lines.pop()
+      if (lines.length) yield lines
+    }
+    remainder += decoder.end()
+    if (remainder) yield remainder.split('\n')
   }
 
   async json (reviver) {
     return JSON.parse(await this.text(), reviver)
   }
 
-  async blob () {
+  async blob (opts) {
     const buffers = []
-    for await (const chunk of this.stream()) {
-      buffers.push(chunk)
+    for await (const batch of this.iter(opts)) {
+      buffers.push(...batch)
     }
     return Buffer.concat(buffers)
   }
@@ -167,6 +242,21 @@ class Jeeves {
   [Symbol.asyncIterator] () {
     return this.stream()[Symbol.asyncIterator]()
   }
+
+  /* c8 ignore start */
+  static [TESTCTRL] (cmd, ...args) {
+    switch (cmd) {
+      case 'createMock': {
+        const j = Object.create(Jeeves.prototype)
+        j.#res = args[0]
+        j.#consumed = false
+        return j
+      }
+      default:
+        throw new Error(`Unknown command: ${cmd}`)
+    }
+  }
+  /* c8 ignore stop */
 }
 
 // -----------------------------------------------------------------
@@ -187,6 +277,7 @@ function addHeader (req, key, val) {
 const get = Jeeves.demand.bind(Jeeves, 'GET')
 const post = Jeeves.demand.bind(Jeeves, 'POST')
 const demand = Jeeves.demand.bind(Jeeves)
+demand[TESTCTRL] = Jeeves[TESTCTRL]
 
-export { demand, get, post }
+export { demand, get, post, Jeeves }
 export default { demand, get, post }
