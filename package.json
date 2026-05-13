@@ -9,9 +9,12 @@
   "scripts": {
     "clean": "rm -rf coverage/ node_modules/.cache/",
     "lint": "standard '{src,test}/**/*.js'|snazzy",
-    "format": "prettier-standard '{src,test}/**/*.js'"
+    "format": "prettier-standard '{src,test}/**/*.js'",
+    "test": "c8 node --test"
   },
   "dependencies": {
-    "@ludlovian/debug": "file:../debug"
+    "@ludlovian/debug": "file:../debug",
+    "@ludlovian/emitter": "file:../emitter",
+    "@ludlovian/lock": "file:../lock"
   }
 }
