@@ -53,6 +53,13 @@ class Jeeves {
       })
 
       req.on('error', reject)
+      if (opts.timeout) {
+        req.on('timeout', () => {
+          const err = new Error('Socket timed out')
+          err.code = 'ETIMEDOUT'
+          req.destroy(err)
+        })
+      }
 
       this.#sendBody(req, body)
     })
